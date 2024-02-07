@@ -26,3 +26,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+telegram_config.json
+
+*.mp4
+
+bin/

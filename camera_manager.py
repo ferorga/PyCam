@@ -13,17 +13,17 @@ from picamera2.outputs import FfmpegOutput
 
 class CameraManager:
 
-    video_config = {
-        "main": {"size": (1280, 720), "format": "RGB888"},
-        "lores": {"size": (320, 240), "format": "YUV420"}  # Assuming default low-resolution size
-    }
-
-    def __init__(self, motion_callback=None):
+    def __init__(self, motion_callback=None, file_callback=None):
+        self.video_config = {
+            "main": {"size": (1280, 720), "format": "YUV420"},
+            "lores": {"size": (320, 240), "format": "YUV420"}
+        }
         self.picam2 = Picamera2()
         self.stream = None
         self.stop_camera = False
         self.prev = None
         self.motion_callback = motion_callback
+        self.file_callback = file_callback
         self.motion_threshold = 7
         self.encoder = None
         self.encoder_rec = None  
@@ -33,14 +33,13 @@ class CameraManager:
         self.recording_cnt = 0
 
     def start(self):        
-        config = self.picam2.create_video_configuration(main={"size": (1280, 720), "format": "RGB888"},
-                                                 lores={"size": (320, 240), "format": "YUV420"})
+        config = self.picam2.create_video_configuration(**self.video_config)
 
         self.picam2.configure(config)      
         self.picam2.controls.FrameRate = 15  
         self.encoder = H264Encoder(1000000)
         self.encoder_rec = H264Encoder(1000000)
-        self.picam2.controls.FrameRate = 25.0
+        self.picam2.controls.FrameRate = 15.0
         self.picam2.start()
         capture_motion_thread = threading.Thread(target=self._capture_motion_th)
         capture_motion_thread.start()                     
@@ -70,12 +69,14 @@ class CameraManager:
 
     def get_lux(self):
         metadata = self.picam2.capture_metadata()
-        return metadata["Lux"]
+        return round(metadata["Lux"], 1)
 
-    def start_recording(self):        
+    def start_recording(self, alarm_enabled):        
         if self.motion_recording_ctrl:
-            self.recording_cnt = 5
+            if self.recording and not alarm_enabled:
+                self.recording_cnt = 10
             if not self.recording:           
+                self.recording_cnt = 10
                 print("starting recording thread")               
                 recording_thread = threading.Thread(target=self._recording_th)      
                 recording_thread.start()  
@@ -113,13 +114,15 @@ class CameraManager:
         file_path = os.path.join(working_path, file_name)
 
         print(f"Start recording to file: {file_path}")
-        self.encoder_rec.output = FfmpegOutput(file_path)
+        self.encoder_rec.output = FfmpegOutput(file_path)        
         self.picam2.start_encoder(self.encoder_rec)
         while self.recording_cnt > 0:
             self.recording_cnt -= 1
             time.sleep(1)
         self.picam2.stop_encoder(self.encoder_rec)
-        print("Stop recording...")   
+        print("Stop recording...") 
+        if self.file_callback:
+            self.file_callback(file_path)  
         self.recording = False     
 
     def _capture_motion_th(self):
@@ -139,6 +142,5 @@ class CameraManager:
     def stop(self):
         print("Stopping Camera")
         self.stop_camera = True
-        #self.picam2.stop_encoder()
         self.picam2.stop()        
         
