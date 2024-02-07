@@ -29,5 +29,6 @@ MANIFEST
 telegram_config.json
 
 *.mp4
+*.h264
 
 bin/

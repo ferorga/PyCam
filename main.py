@@ -2,6 +2,7 @@
 
 import time
 import asyncio
+import psutil
 
 from mqtt_manager import MQTTManager
 from tcp_server import TCPServer
@@ -30,6 +31,18 @@ def file_cb(path):
 def stream_cb(stream):
     camera.set_stream(stream)
     print("New stream received!")
+
+def get_cpu_load_per_core():
+    cpu_load_per_core = psutil.cpu_percent(interval=1, percpu=True)
+    return cpu_load_per_core
+
+def get_disk_usage():
+    disk_usage = psutil.disk_usage('/')
+    total_space = disk_usage.total
+    free_space = disk_usage.free
+    used_space = disk_usage.used
+    percentage_free = round((free_space / total_space) * 100,1)
+    return percentage_free
 
 def message_cb(topic, payload):  
 
@@ -82,6 +95,8 @@ alarm_enabled = False
 try:
     while not force_stop:        
         
+        #print("CPU load per core:", get_cpu_load_per_core())
+
         mqtt_manager.publish_message("homeassistant/piz2/camera/status", payload = "online")
 
         mqtt_manager.publish_message("homeassistant/piz2/camera/temp", payload = get_cpu_temp())
@@ -92,6 +107,7 @@ try:
         mqtt_manager.publish_message("homeassistant/piz2/camera/events_today", payload = camera.get_number_of_events_today())
         mqtt_manager.publish_message("homeassistant/piz2/camera/recording", payload = "on" if camera.is_recording() else "off")
         mqtt_manager.publish_message("homeassistant/piz2/camera/alarm", payload = "on" if alarm_enabled else "off")
+        mqtt_manager.publish_message("homeassistant/piz2/camera/storage", payload = get_disk_usage())
 
         if motion_detected_cnt > 0:
             motion_detected_cnt -= 1
