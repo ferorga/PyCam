@@ -4,6 +4,7 @@
     "mqtt_host": "192.168.20.100",
     "mqtt_port": 1883,
     "subscribed_topics": [
-        "homeassistant/piz2/control/rtsp"
+        "homeassistant/piz2/control/rtsp",
+        "homeassistant/piz2/control/motion_recording"
       ]
 }
