@@ -11,9 +11,11 @@ from pycamzero_bot import pycamzero_bot
 
 
 def motion_cb(mse):
-    global motion_detected_cnt    
+    global motion_detected_cnt  
+
     motion_detected_cnt = 5
-    camera.start_recording(alarm_enabled)
+    if motion_ctrl_enabled:
+        camera.start_recording(alarm_enabled)
 
 def file_cb(path):
     if alarm_enabled:
@@ -47,29 +49,43 @@ def get_disk_usage():
 def message_cb(topic, payload):  
 
     global alarm_enabled
+    global motion_ctrl_enabled
       
     print("New MQTT message received!")
     if topic == "homeassistant/piz2/control/rtsp" and payload == "off":        
         print("RTSP control turned off")
         camera.stop_stream()
     if topic == "homeassistant/piz2/control/rtsp" and payload == "on":        
-        print("RTSP control turned on")
-        camera.start_stream()
+        if (camera.is_on()):
+            print("RTSP control turned on")
+            camera.start_stream()
     if topic == "homeassistant/piz2/control/motion_recording" and payload == "on":    
-        print("Enabling Motion Recording") 
-        camera.set_motion_recording(True)
+        if (camera.is_on()):
+            print("Enabling Motion Recording") 
+            motion_ctrl_enabled = True
     if topic == "homeassistant/piz2/control/motion_recording" and payload == "off":    
         print("Disabling Motion Recording") 
         alarm_enabled = False
-        camera.set_motion_recording(False)
+        motion_ctrl_enabled = False
     if topic == "homeassistant/piz2/control/alarm" and payload == "on":    
         print("Enabling Alarm") 
         alarm_enabled = True
-        camera.set_motion_recording(True)
+        motion_ctrl_enabled = True        
+        if not camera.is_on():
+            camera.start()
     if topic == "homeassistant/piz2/control/alarm" and payload == "off":    
         print("Disabling Alarm") 
         alarm_enabled = False
-        camera.set_motion_recording(False)
+        motion_ctrl_enabled = False
+    if topic == "homeassistant/piz2/control/power" and payload == "off":    
+        print("Powering Off the Camera") 
+        alarm_enabled = False
+        motion_ctrl_enabled = False        
+        camera.stop()
+    if topic == "homeassistant/piz2/control/power" and payload == "on":    
+        print("Powering On the Camera")         
+        camera.start()
+
 
 def get_cpu_temp():
     temp_file = "/sys/class/thermal/thermal_zone0/temp"
@@ -90,6 +106,7 @@ mqtt_manager = MQTTManager(message_callback=message_cb)
 
 force_stop = False
 motion_detected_cnt = 0
+motion_ctrl_enabled = False
 alarm_enabled = False
 
 try:
@@ -103,11 +120,12 @@ try:
         mqtt_manager.publish_message("homeassistant/piz2/camera/rtsp", payload = "on" if camera.is_streaming() else "off")
         mqtt_manager.publish_message("homeassistant/piz2/camera/lux", payload = camera.get_lux())
         mqtt_manager.publish_message("homeassistant/piz2/camera/motion", payload = "on" if motion_detected_cnt > 0 else "off")
-        mqtt_manager.publish_message("homeassistant/piz2/camera/motion_recording", payload = "on" if camera.is_motion_recording_enabled() > 0 else "off")
+        mqtt_manager.publish_message("homeassistant/piz2/camera/motion_recording", payload = "on" if motion_ctrl_enabled else "off")
         mqtt_manager.publish_message("homeassistant/piz2/camera/events_today", payload = camera.get_number_of_events_today())
         mqtt_manager.publish_message("homeassistant/piz2/camera/recording", payload = "on" if camera.is_recording() else "off")
         mqtt_manager.publish_message("homeassistant/piz2/camera/alarm", payload = "on" if alarm_enabled else "off")
         mqtt_manager.publish_message("homeassistant/piz2/camera/storage", payload = get_disk_usage())
+        mqtt_manager.publish_message("homeassistant/piz2/camera/power", payload = "on" if camera.is_on() else "off")
 
         if motion_detected_cnt > 0:
             motion_detected_cnt -= 1

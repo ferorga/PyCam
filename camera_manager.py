@@ -23,17 +23,17 @@ class CameraManager:
         }
         self.picam2 = Picamera2()
         self.stream = None
-        self.stop_camera = False
+        self.camera_started = False
         self.prev = None
         self.motion_callback = motion_callback
         self.file_callback = file_callback
         self.motion_threshold = 7
-        self.encoder = None
-        self.encoder_rec = None  
         self.streaming = False     
         self.recording = False 
-        self.motion_recording_ctrl = False    
+        self.capturing_motion = False
         self.recording_cnt = 0
+        self.encoder = H264Encoder(1000000)
+        self.encoder_rec = H264Encoder(qp=30)   
         self.lock = threading.Lock()
 
     def apply_timestamp(request):
@@ -46,25 +46,31 @@ class CameraManager:
         with MappedArray(request, "main") as m:
             cv2.putText(m.array, timestamp, origin, font, scale, colour, thickness)
 
-    def start(self):        
-        config = self.picam2.create_video_configuration(**self.video_config)
+    def start(self):
+        if not self.camera_started:
+            self.camera_started = True
 
-        self.picam2.configure(config)              
-        self.picam2.pre_callback = CameraManager.apply_timestamp
-        self.picam2.set_controls({"FrameRate": 25})
-        self.encoder = H264Encoder(1000000)
-        self.encoder_rec = H264Encoder(qp=30)        
-        self.picam2.start()
-        capture_motion_thread = threading.Thread(target=self._capture_motion_th)
-        capture_motion_thread.start()                     
+            config = self.picam2.create_video_configuration(**self.video_config)
+            self.picam2.configure(config)              
+            self.picam2.pre_callback = CameraManager.apply_timestamp
+            self.picam2.set_controls({"FrameRate": 25})
+     
+            self.picam2.start()
+            capture_motion_thread = threading.Thread(target=self._capture_motion_th)
+            capture_motion_thread.start()
+        else:
+            print("Camera already started...")
 
-    def set_stream(self, stream):        
-        if self.streaming:
-            self.picam2.stop_encoder(self.encoder)                    
-        print("Starting encoder")
-        self.encoder.output = FileOutput(stream)
-        self.picam2.start_encoder(self.encoder, name="main")
-        self.streaming = True
+    def restart(self):
+        if self.camera_started:
+            self.stop()
+        self.start()
+
+    def set_stream(self, stream):   
+        if self.camera_started: 
+            self.encoder.output = FileOutput(stream)    
+            self.restart()                         
+            self.start_stream()              
 
     def stop_stream(self):
         if self.streaming:
@@ -73,7 +79,7 @@ class CameraManager:
             self.streaming = False        
 
     def start_stream(self):
-        if not self.streaming:
+        if not self.streaming and self.camera_started:
             print("Start streaming")
             self.picam2.start_encoder(self.encoder, name="main")
             self.streaming = True
@@ -82,11 +88,14 @@ class CameraManager:
         return self.streaming
 
     def get_lux(self):
+        if not self.camera_started:
+            return 0.0
+
         metadata = self.picam2.capture_metadata()
         return round(metadata["Lux"], 1)
 
     def start_recording(self, alarm_enabled):        
-        if self.motion_recording_ctrl:            
+        if self.camera_started:            
             if self.recording and not alarm_enabled:                
                 self.lock.acquire()
                 self.recording_cnt = 10
@@ -98,12 +107,6 @@ class CameraManager:
                 print("starting recording thread")               
                 recording_thread = threading.Thread(target=self._recording_th, name="main")      
                 recording_thread.start()  
-
-    def set_motion_recording(self, enable):
-        self.motion_recording_ctrl = enable
-
-    def is_motion_recording_enabled(self):
-        return self.motion_recording_ctrl
 
     def get_number_of_events_today(self):
         current_date = datetime.datetime.now().strftime("%y_%m_%d")
@@ -117,6 +120,9 @@ class CameraManager:
 
     def is_recording(self):
         return True if self.recording_cnt > 0 else False
+
+    def is_on(self):
+        return self.camera_started
 
     def _recording_th(self):
         self.recording = True
@@ -146,21 +152,26 @@ class CameraManager:
         self.recording = False     
 
     def _capture_motion_th(self):
-        while not self.stop_camera:
+        self.capturing_motion = True
+        while self.camera_started:
             cur = self.picam2.capture_buffer("lores")
             cur = cur[:self.video_config["lores"]["size"][0] * self.video_config["lores"]["size"][1]].reshape(
                 self.video_config["lores"]["size"][1], self.video_config["lores"]["size"][0])
             if self.prev is not None:
                 mse = np.square(np.subtract(cur, self.prev)).mean()
-                if mse > self.motion_threshold:
-                    #print("New Motion Detected:", mse)
+                if mse > self.motion_threshold:                    
                     if self.motion_callback:
                         self.motion_callback(mse)
             self.prev = cur
             time.sleep(0.5)
+        self.capturing_motion = False
+        
 
     def stop(self):
-        print("Stopping Camera")
-        self.stop_camera = True
+        self.camera_started = False
+        print("Stopping Camera")        
+        self.stop_stream()
+        while self.recording or self.capturing_motion:
+            time.sleep(0.5)                        
         self.picam2.stop()        
         
